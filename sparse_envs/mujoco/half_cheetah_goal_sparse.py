@@ -77,7 +77,7 @@ class HalfCheetahSparseGoalEnv(NonStationaryGoalVelocityEnv, MujocoEnv, utils.Ez
 
     def sparsify_rewards(self, r):
         ''' zero out rewards when outside the goal radius '''
-        goal_radius = 0.2
+        goal_radius = 0.5
         if r < - goal_radius:
             r = -4
         r = r + 2

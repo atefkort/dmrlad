@@ -1,7 +1,7 @@
 {
     "env_name": "cheetah-goal-sparse",
     "env_params": {
-        "n_train_tasks": 100,
+        "n_train_tasks": 50,
         "n_eval_tasks": 30,
         "use_normalized_env": true,
         "change_mode": "location",
@@ -23,7 +23,7 @@
         "batch_size_combination": 256,
         "batch_size_policy": 256,
         "batch_size_relabel": 1024,
-        "time_steps": 10,
+        "time_steps": 20,
         "latent_size": 1,
         "sac_layer_size": 300,
         "max_replay_buffer_size": 10000000,
@@ -35,7 +35,7 @@
         "snapshot_gap": 10,
         "num_reconstruction_steps": 5000,
         "num_policy_steps": 2000,
-        "num_train_tasks_per_episode": 20,
+        "num_train_tasks_per_episode": 10,
         "num_transitions_initial": 100,
         "num_transitions_per_episode": 200,
         "num_eval_trajectories": 2,
