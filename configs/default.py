@@ -60,7 +60,7 @@ default_config = dict(
         use_softmax=True, # whether to use softmax or hardmax for relabeling distribution
         sparse_rewards=False,
         utility_batch_size=64,
-        num_quantiles=16
+        num_quantiles = 16
     ),
 
     reconstruction_params=dict(

@@ -11,21 +11,16 @@ import torch.nn as nn
 from rlkit.envs import ENVS
 from rlkit.envs.wrappers import NormalizedBoxEnv, CameraWrapper
 from rlkit.torch.sac.policies import TanhGaussianPolicy
-from rlkit.torch.networks import Mlp, FlattenMlp
+from rlkit.torch.networks import Mlp, FlattenMlp, QuantileMlp, softmax
 from rlkit.launchers.launcher_util import setup_logger
 import rlkit.torch.pytorch_util as ptu
 from configs.analysis_config import analysis_config
 
 
 from dmrlad.encoder_decoder_networks import PriorPz, EncoderMixtureModelTrajectory, EncoderMixtureModelTransitionSharedY, EncoderMixtureModelTransitionIndividualY, DecoderMDP
-from dmrlad.dsac import PolicyTrainer
 from dmrlad.stacked_replay_buffer import StackedReplayBuffer
-from dmrlad.reconstruction_trainer import ReconstructionTrainer
-from dmrlad.combination_trainer import CombinationTrainer
 from dmrlad.rollout_worker import RolloutCoordinator
 from dmrlad.agent import CEMRLAgent
-from dmrlad.relabeler import Relabeler
-from dmrlad.dmrlad_algorithm import DMRLADAlgorithm
 
 import pickle
 
@@ -41,14 +36,7 @@ def experiment(variant):
         torch.manual_seed(variant['algo_params']['seed'])
         np.random.seed(variant['algo_params']['seed'])
 
-    # create logging directory
-    encoding_save_epochs = [0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50, 75, 100, 150, 200, 225, 250, 275, 300,
-                            325, 350, 375, 400, 425, 450, 475, 500, 600, 750, 1000, 1250, 1500, 1750, 2000,
-                            3000, 5000, 10000, 15000, 20000]
-    experiment_log_dir = setup_logger(variant['env_name'], variant=variant, exp_id=None,
-                                      base_log_dir=variant['util_params']['base_log_dir'], snapshot_mode='specific',
-                                      snapshot_gap=variant['algo_params']['snapshot_gap'],
-                                      snapshot_points=encoding_save_epochs)
+
 
     # create multi-task environment and sample tasks
     env = ENVS[variant['env_name']](**variant['env_params'])
@@ -63,6 +51,7 @@ def experiment(variant):
     #train_tasks = tasks[:variant['env_params']['n_train_tasks']]
     train_tasks = list(range(len(env.train_tasks)))
     test_tasks = tasks[-variant['env_params']['n_eval_tasks']:]
+    train_goals = env.get_train_goals()
 
     # instantiate networks
     net_complex_enc_dec = variant['reconstruction_params']['net_complex_enc_dec']
@@ -105,38 +94,64 @@ def experiment(variant):
         variant['env_params']['state_reconstruction_clip'],
     )
 
-    # old
-    #prior_pz = nn.Linear(num_classes, 2 * latent_dim)
-    # new
     prior_pz = PriorPz(num_classes, latent_dim)
 
     M = variant['algo_params']['sac_layer_size']
-    qf1 = FlattenMlp(
+    num_quantiles = variant['algo_params']['num_quantiles']
+
+    zf1 = QuantileMlp(
         input_size=(obs_dim + latent_dim) + action_dim,
         output_size=1,
+        num_quantiles=num_quantiles,
         hidden_sizes=[M, M, M],
     )
-    qf2 = FlattenMlp(
+    zf2 = QuantileMlp(
         input_size=(obs_dim + latent_dim) + action_dim,
         output_size=1,
+        num_quantiles=num_quantiles,
         hidden_sizes=[M, M, M],
     )
-    target_qf1 = FlattenMlp(
+    target_zf1 = QuantileMlp(
         input_size=(obs_dim + latent_dim) + action_dim,
         output_size=1,
+        num_quantiles=num_quantiles,
         hidden_sizes=[M, M, M],
     )
-    target_qf2 = FlattenMlp(
+    target_zf2 = QuantileMlp(
         input_size=(obs_dim + latent_dim) + action_dim,
         output_size=1,
+        num_quantiles=num_quantiles,
         hidden_sizes=[M, M, M],
     )
+
     policy = TanhGaussianPolicy(
         obs_dim=(obs_dim + latent_dim),
         action_dim=action_dim,
         latent_dim=latent_dim,
         hidden_sizes=[M, M, M],
     )
+
+    target_policy = TanhGaussianPolicy(
+        obs_dim=(obs_dim + latent_dim),
+        action_dim=action_dim,
+        latent_dim=latent_dim,
+        hidden_sizes=[M, M, M],
+    )
+
+    fp = target_fp = None
+    if variant['algo_params'].get('tau_type') == 'fqf':
+        fp = FlattenMlp(
+            input_size=obs_dim + action_dim,
+            output_size=num_quantiles,
+            hidden_sizes=[M // 2, M // 2],
+            output_activation=softmax,
+        )
+        target_fp = FlattenMlp(
+            input_size=obs_dim + action_dim,
+            output_size=num_quantiles,
+            hidden_sizes=[M // 2, M // 2],
+            output_activation=softmax,
+        )
 
     alpha_net = Mlp(
         hidden_sizes=[latent_dim * 10],
@@ -147,11 +162,12 @@ def experiment(variant):
     networks = {'encoder': encoder,
                 'prior_pz': prior_pz,
                 'decoder': decoder,
-                'qf1': qf1,
-                'qf2': qf2,
-                'target_qf1': target_qf1,
-                'target_qf2': target_qf2,
+                'zf1': zf1,
+                'zf2': zf2,
+                'target_zf1': target_zf1,
+                'target_zf2': target_zf2,
                 'policy': policy,
+                'target_policy':target_policy,
                 'alpha_net': alpha_net}
 
     # optionally load pre-trained weights
@@ -171,7 +187,8 @@ def experiment(variant):
         variant['algo_params']['data_usage_sac'],
         variant['algo_params']['num_last_samples'],
         variant['algo_params']['permute_samples'],
-        variant['algo_params']['encoding_mode']
+        variant['algo_params']['encoding_mode'],
+        train_tasks
     )
 
     #Agent
@@ -181,6 +198,9 @@ def experiment(variant):
         policy,
     )
 
+    if ptu.gpu_enabled():
+        agent.to(ptu.device)
+
     # Rollout Coordinator
     rollout_coordinator = RolloutCoordinator(
         env,
@@ -188,8 +208,15 @@ def experiment(variant):
         variant['env_params'],
         variant['train_or_showcase'],
         agent,
+        zf1,
+        zf2,
+        num_quantiles,
         replay_buffer,
         time_steps,
+        train_goals,
+        variant['algo_params']['utility_batch_size'],
+        variant['algo_params']['sparse_rewards'],
+        variant['algo_params']['use_softmax'],
 
         variant['algo_params']['max_path_length'],
         variant['algo_params']['permute_samples'],
@@ -201,126 +228,10 @@ def experiment(variant):
         variant['env_params']['scripted_policy']
         )
 
-    # ReconstructionTrainer
-    reconstruction_trainer = ReconstructionTrainer(
-        encoder,
-        decoder,
-        prior_pz,
-        replay_buffer,
-        variant['algo_params']['batch_size_reconstruction'],
-        num_classes,
-        latent_dim,
-        time_steps,
-        variant['reconstruction_params']['lr_decoder'],
-        variant['reconstruction_params']['lr_encoder'],
-        variant['reconstruction_params']['alpha_kl_z'],
-        variant['reconstruction_params']['beta_kl_y'],
-        variant['reconstruction_params']['use_state_diff'],
-        variant['reconstruction_params']['component_constraint_learning'],
-        variant['env_params']['state_reconstruction_clip'],
-        variant['reconstruction_params']['train_val_percent'],
-        variant['reconstruction_params']['eval_interval'],
-        variant['reconstruction_params']['early_stopping_threshold'],
-        experiment_log_dir,
-        variant['reconstruction_params']['prior_mode'],
-        variant['reconstruction_params']['prior_sigma'],
-        True if variant['algo_params']['encoding_mode'] == 'transitionIndividualY' else False,
-        variant['algo_params']['data_usage_reconstruction'],
-    )
+
+    
 
 
-    # PolicyTrainer
-    policy_trainer = PolicyTrainer(
-        policy,
-        qf1,
-        qf2,
-        target_qf1,
-        target_qf2,
-        alpha_net,
-        replay_buffer,
-        variant['algo_params']['batch_size_policy'],
-        action_dim,
-        variant['algo_params']['data_usage_sac'],
-        use_parametrized_alpha=variant['algo_params']['use_parametrized_alpha'],
-        target_entropy_factor=variant['algo_params']['target_entropy_factor'],
-        alpha=variant['algo_params']['sac_alpha']
-    )
-
-    combination_trainer = CombinationTrainer(
-        # from reconstruction trainer
-        encoder,
-        decoder,
-        prior_pz,
-        replay_buffer,
-        variant['algo_params']['batch_size_reconstruction'],
-        num_classes,
-        latent_dim,
-        variant['reconstruction_params']['lr_decoder'],
-        variant['reconstruction_params']['lr_encoder'],
-        variant['reconstruction_params']['alpha_kl_z'],
-        variant['reconstruction_params']['beta_kl_y'],
-        variant['reconstruction_params']['use_state_diff'],
-        variant['env_params']['state_reconstruction_clip'],
-        variant['reconstruction_params']['factor_qf_loss'],
-        variant['reconstruction_params']['train_val_percent'],
-        variant['reconstruction_params']['eval_interval'],
-        variant['reconstruction_params']['early_stopping_threshold'],
-        experiment_log_dir,
-
-        # from policy trainer
-        policy,
-        qf1,
-        qf2,
-        target_qf1,
-        target_qf2,
-        action_dim,
-        target_entropy_factor=variant['algo_params']['target_entropy_factor']
-        # stuff missing
-    )
-
-
-    relabeler = Relabeler(
-        encoder,
-        replay_buffer,
-        variant['algo_params']['batch_size_relabel'],
-        action_dim,
-        obs_dim,
-        variant['algo_params']['use_data_normalization'],
-    )
-
-
-    algorithm = DMRLADAlgorithm(
-        replay_buffer,
-        rollout_coordinator,
-        reconstruction_trainer,
-        combination_trainer,
-        policy_trainer,
-        relabeler,
-        agent,
-        networks,
-
-        train_tasks,
-        test_tasks,
-
-        variant['algo_params']['num_train_epochs'],
-        variant['algo_params']['num_reconstruction_steps'],
-        variant['algo_params']['num_policy_steps'],
-        variant['algo_params']['num_train_tasks_per_episode'],
-        variant['algo_params']['num_transitions_initial'],
-        variant['algo_params']['num_transitions_per_episode'],
-        variant['algo_params']['num_eval_trajectories'],
-        variant['algo_params']['showcase_every'],
-        variant['algo_params']['snapshot_gap'],
-        variant['algo_params']['num_showcase_deterministic'],
-        variant['algo_params']['num_showcase_non_deterministic'],
-        variant['algo_params']['use_relabeler'],
-        variant['algo_params']['use_combination_trainer'],
-        experiment_log_dir,
-        latent_dim
-        )
-
-    if ptu.gpu_enabled():
-        algorithm.to()
 
     # debugging triggers a lot of printing and logs to a debug directory
     DEBUG = variant['util_params']['debug']
@@ -350,20 +261,30 @@ def experiment(variant):
     if variant['analysis_params']['plot_encoding']:
         plot_encodings_split(showcase_itr, path_to_folder, save=save)
 
-    # visualize test cases
-    results = rollout_coordinator.collect_data(test_tasks[example_case:example_case + 1], 'test',
-            deterministic=True, max_trajs=1, animated=variant['analysis_params']['visualize_run'], save_frames=False)
 
-    # Reward for this run
-    per_path_rewards = [np.sum(path["rewards"]) for worker in results for task in worker for path in task[0]]
-    per_path_rewards = np.array(per_path_rewards)
-    eval_average_reward = per_path_rewards.mean()
-    print("Average reward: " + str(eval_average_reward))
-
+    test = True
+    if variant['analysis_params']['plot_test_tasks']:
+        import matplotlib.pyplot as plt
+        env_tasks = [task["velocity"] for task in env.tasks]
+        
+        results = rollout_coordinator.collect_data(test_tasks, 'test',
+                deterministic=False, max_trajs=1, animated=variant['analysis_params']['visualize_run'], save_frames=False)
+        per_path_rewards = [np.sum(path["rewards"]) for worker in results for task in worker for path in task[0]]
+        per_path_rewards = np.array(per_path_rewards)
+        cur_tasks = [env_tasks[path["task_id"]] for worker in results for task in worker for path in task[0]]
+        cur_tasks = np.array(cur_tasks)
+        plt.plot(cur_tasks, per_path_rewards, 'b*', label='sample')
+        plt.xlabel('tasks')
+        plt.ylabel('rewards')
+        plt.legend()
+        plt.show()    
+    
+    temp_tasks = [test_tasks[1],test_tasks[4],test_tasks[7],test_tasks[8],test_tasks[5]]   
     # velocity plot
-    if variant['env_name'].split('-')[-1] == 'vel' and variant['analysis_params']['plot_time_response']:
+    if 'vel' in variant['env_name'].split('-')  and variant['analysis_params']['plot_time_response']:
         import matplotlib.pyplot as plt
         plt.figure()
+        results = rollout_coordinator.collect_data(test_tasks[example_case:example_case + 1], 'test', deterministic=True, max_trajs=1, animated=False, save_frames=True)
         velocity_is = [a['velocity'] for a in results[0][0][0][0]['env_infos']]
         filter_constant = time_steps
         velocity_is_temp = ([0] * filter_constant) + velocity_is
@@ -403,14 +324,14 @@ def experiment(variant):
             plt.savefig(path_to_folder + '/' + variant['env_name'] + '_' + str(showcase_itr) + '_' + "velocity_vs_goal_direction_new" + ".pdf", dpi=300, bbox_inches='tight', format="pdf")
         plt.show()
 
-    if variant['env_name'].split('-')[-1] == 'vel' and variant['analysis_params']['plot_velocity_multi']:
+    if 'vel' in variant['env_name'].split('-')  and variant['analysis_params']['plot_velocity_multi']:
         import matplotlib.pyplot as plt
         import matplotlib.pylab as pl
         plt.figure(figsize=(10,5))
-        colors = pl.cm.coolwarm(np.linspace(0, 1, len(test_tasks)))
+        colors = pl.cm.coolwarm(np.linspace(0, 1, len(temp_tasks)))
         #colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-        for i in range(len(test_tasks)):
-            results = rollout_coordinator.collect_data(test_tasks[i:i + 1], 'test', deterministic=True, max_trajs=1,
+        for i in range(len(temp_tasks)):
+            results = rollout_coordinator.collect_data(temp_tasks[i:i + 1], 'test', deterministic=False, max_trajs=1,
                                                        animated=False, save_frames=False)
 
             velocity_is = [a['velocity'] for a in results[0][0][0][0]['env_infos']]
@@ -439,7 +360,18 @@ def experiment(variant):
     if variant['analysis_params']['produce_video']:
         print("Producing video... do NOT kill program until completion!")
         video_name_string = path_to_folder.split('/')[-1] + "_" + variant['env_name'] + ".mp4"
-        results = rollout_coordinator.collect_data(test_tasks[example_case:example_case + 1], 'test', deterministic=True, max_trajs=1, animated=False, save_frames=True)
+        results = rollout_coordinator.collect_data(test_tasks[example_case:example_case + 1], 'test', deterministic=False, max_trajs=1, animated=False, save_frames=True)
+        env_test_tasks = [task["goal"] for task in env.test_tasks]
+        print("Goal to reach: " + str(env_test_tasks[example_case]))
+        vel = [info["xpos"] for worker in results for task in worker for path in task[0] for info in path["env_infos"]]
+        per_path_rewards = np.array(vel)
+        eval_average_reward = np.median(per_path_rewards)
+        #print(per_path_rewards)
+        print("Median vel: " + str(eval_average_reward))
+        per_path_rewards = [np.sum(path["rewards"]) for worker in results for task in worker for path in task[0]]
+        per_path_rewards = np.array(per_path_rewards)
+        eval_average_reward = per_path_rewards.mean()
+        print("Average reward: " + str(eval_average_reward))
         path_video = results[0][0][0][0]
         video_frames = []
         video_frames += [t['frame'] for t in path_video['env_infos']]

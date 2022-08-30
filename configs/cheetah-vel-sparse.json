@@ -1,13 +1,13 @@
 {
     "env_name": "cheetah-vel-sparse",
     "env_params": {
-        "n_train_tasks": 50,
+        "n_train_tasks": 100,
         "n_eval_tasks": 30,
         "use_normalized_env": true,
         "change_mode": "location",
         "termination_possible": false,
-        "positive_change_point_basis": 1000000000000,
-        "negative_change_point_basis": -1000000000000,
+        "positive_change_point_basis": 1000000,
+        "negative_change_point_basis": -1000000,
         "task_min_velocity": 0.0,
         "task_max_velocity": 3.0,
         "change_point_interval": 1,
@@ -37,7 +37,7 @@
         "snapshot_gap": 10,
         "num_reconstruction_steps": 5000,
         "num_policy_steps": 2000,
-        "num_train_tasks_per_episode": 10,
+        "num_train_tasks_per_episode": 20,
         "num_transitions_initial": 100,
         "num_transitions_per_episode": 200,
         "num_eval_trajectories": 2,
@@ -47,7 +47,7 @@
         "max_path_length": 200,
         "target_entropy_factor": 1.0,
         "sac_alpha": 1.0,
-        "utility_batch_size": 256
+        "utility_batch_size": 64
     },
     "reconstruction_params": {
         "use_state_diff": false,

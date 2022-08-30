@@ -1,6 +1,8 @@
 import csv
 from datetime import datetime
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+import matplotlib.ticker as ticker
 import json
 import os
 import numpy as np
@@ -70,7 +72,8 @@ def plot_multiple_runs(experiments, benchmark=None, log=True, name=None, save=Fa
         plt.plot(x, median, label=name, color=cycle[color])
         plt.fill_between(x, percentile_25, percentile_75, alpha=0.25, color=cycle[color], linewidth=0)
 
-    fig = plt.figure()
+    fig, ax = plt.subplots()
+    ax.xaxis.set_major_formatter(ticker.EngFormatter())
     plot_median_interquartile(experiments, "CEMRL (ours)", 0)
     if benchmark is not None:
         benchmark = [str(x) for x in benchmark]
@@ -85,14 +88,61 @@ def plot_multiple_runs(experiments, benchmark=None, log=True, name=None, save=Fa
     plt.yticks(fontsize=fontsize)
     plt.title(name, fontsize=18)
     #fig.axes[0].set_xticks(np.arange(20000, 250000, 50000)) # for cheetah
-    plt.xscale("log")
-    plt.tight_layout()
+    #plt.xscale("log")
+    #plt.tight_layout()
     if save:
         now = datetime.now()
         datename = now.strftime("%Y_%m_%d_%H_%M_%S")
         plt.savefig(os.path.dirname(os.path.realpath(__file__)) + "/figures/" + datename + '_' + name + ".pdf", dpi=300, format="pdf")
     plt.show()
 
+def plot(exp_dir, algo_name, color=0, save=False):
+    # Check if file is already logged
+    database = load_json(database_file)
+    
+    exp_name = exp_dir.split('/')[-1]
+    env_name = exp_dir.split('/')[-2]
+
+    new_id = add_experiment_to_database(exp_name, "cemrl", env_name, '_'.join(exp_name.split('_')[:3]), "no comment", "0.0", "0.0",
+                                progress_name=exp_dir + "/" + "progress.csv", variant_name=exp_dir + "/" + "variant.json")
+    plot_runs([new_id], algo_name, color, benchmark=None, name=env_name, save=False)
+
+def plot_runs(experiments, algo_name, color=0, benchmark=None, log=True, name=None, save=False):
+    database = load_json(database_file)
+    experiments = [str(x) for x in experiments]
+    x_axis = "n_timesteps"
+    y_axis = "testAverageReturn"
+
+    plt.rc('text', usetex=True)
+    plt.rc('font', family='serif')
+    cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    def plot_median_interquartile(data, name, color):
+        x = database[data[0]][x_axis]
+        y = np.zeros((len(data), len(x)))
+        for i, exp in enumerate(data):
+            assert database[exp][x_axis] == x
+            y[i] = np.array(database[exp][y_axis])
+
+        median = np.nanmedian(y, axis=0)
+        percentile_25 = np.nanpercentile(y, 25, axis=0)
+        percentile_75 = np.nanpercentile(y, 75, axis=0)
+        plt.plot(x, median, label=name, color=cycle[color])
+        plt.fill_between(x, percentile_25, percentile_75, alpha=0.25, color=cycle[color], linewidth=0)
+
+
+    plot_median_interquartile(experiments, algo_name, color)
+
+
+    #plt.title(name, fontsize=18)
+    #fig.axes[0].set_xticks(np.arange(20000, 250000, 50000)) # for cheetah
+    #plt.xscale("log")
+    #plt.tight_layout()
+    if save:
+        now = datetime.now()
+        datename = now.strftime("%Y_%m_%d_%H_%M_%S")
+        plt.savefig(os.path.dirname(os.path.realpath(__file__)) + "/figures/" + datename + '_' + name + ".pdf", dpi=300, format="pdf")
+    #plt.show()
 
 def manage_logging(exp_dir, save=False):
     # Check if file is already logged
@@ -181,7 +231,7 @@ def add_experiment_to_database(name, algo, env, date, description, algo_version,
         database[new_id]["n_timesteps"] = [float(i) for i in progress_dict["n_env_steps_total"]]
         database[new_id]["time"] = [float(i) for i in progress_dict["time_total"]]
         database[new_id]["trainAverageReturn"] = [float(i) for i in progress_dict["train_eval_avg_reward_deterministic"]]
-        database[new_id]["testAverageReturn"] = [float(i) for i in progress_dict["test_eval_avg_reward_deterministic"]]
+        database[new_id]["testAverageReturn"] = [float(i) for i in progress_dict["test_eval_avg_reward_non_deterministic"]]
         if "train_eval_success_rate" in progress_dict:
             database[new_id]["trainSuccessRate"] = [float(i) for i in progress_dict["train_eval_success_rate"]]
         if "test_eval_success_rate" in progress_dict:

@@ -1,4 +1,4 @@
-name: cemrl
+name: dmrlad
 channels:
   - defaults
 dependencies:

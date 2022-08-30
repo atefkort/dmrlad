@@ -1,7 +1,6 @@
-# Continuous Environment Meta Reinforcement Learning (CEMRL)
+# Distributional Meta-RL with Augmented Data (DMRLAD)
 
-import os, shutil
-import pathlib
+import os
 import numpy as np
 import click
 import json
@@ -17,17 +16,14 @@ import rlkit.torch.pytorch_util as ptu
 from configs.default import default_config
 
 
-from cerml.encoder_decoder_networks import PriorPz, EncoderMixtureModelTrajectory, EncoderMixtureModelTransitionSharedY, EncoderMixtureModelTransitionIndividualY, DecoderMDP
-from cerml.sac import PolicyTrainer
-from cerml.stacked_replay_buffer import StackedReplayBuffer
-from cerml.reconstruction_trainer import ReconstructionTrainer
-from cerml.combination_trainer import CombinationTrainer
-from cerml.rollout_worker import RolloutCoordinator
-from cerml.agent import CEMRLAgent, ScriptedPolicyAgent
-from cerml.relabeler import Relabeler
-from cerml.cemrl_algorithm import CEMRLAlgorithm
-
-import pickle
+from dmrlad.encoder_decoder_networks import PriorPz, EncoderMixtureModelTrajectory, EncoderMixtureModelTransitionSharedY, EncoderMixtureModelTransitionIndividualY, DecoderMDP
+from dmrlad.dsac import PolicyTrainer
+from dmrlad.stacked_replay_buffer import StackedReplayBuffer
+from dmrlad.reconstruction_trainer import ReconstructionTrainer
+from dmrlad.rollout_worker import RolloutCoordinator
+from dmrlad.agent import CEMRLAgent, ScriptedPolicyAgent
+from dmrlad.relabeler import Relabeler
+from dmrlad.dmrlad_algorithm import DMRLADAlgorithm
 
 
 def experiment(variant):
@@ -206,6 +202,7 @@ def experiment(variant):
         prior_pz,
         policy
     )
+    
     policy_trainer = PolicyTrainer(
         policy,
         target_policy,
@@ -295,7 +292,7 @@ def experiment(variant):
     )
 
 
-    algorithm = CEMRLAlgorithm(
+    algorithm = DMRLADAlgorithm(
         replay_buffer,
         rollout_coordinator,
         reconstruction_trainer,

@@ -85,7 +85,7 @@ class HalfCheetahSparseGoalEnv(NonStationaryGoalVelocityEnv, MujocoEnv, utils.Ez
 
     def sample_tasks(self, num_tasks):
         np.random.seed(1337)
-        goals = np.random.uniform(1, 10, size=(num_tasks,))
+        goals = np.random.uniform(1, 6, size=(num_tasks,))
         tasks = [{'goal': goal} for goal in goals]
         return tasks
 

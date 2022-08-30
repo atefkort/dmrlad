@@ -1,8 +1,11 @@
 analysis_config = dict(
     env_name='placeholder',
-    path_to_weights="output/2022_02_14_12_02_21",  # CONFIGURE! path to experiment folder
+    path_to_weights="output/cheetah-goal-sparse/2022_06_16_18_17_04",
+    path_to_weights_other="output/ant-stationary-vel/DMRLAD",
+    path_to_weights_other1="output/ant-vel-sparse/CEMRL+HFR",
+    path_to_weights_other2="output/ant-vel-sparse/CEMRL+DHFR",  # CONFIGURE! path to experiment folder
     train_or_showcase='showcase',  # 'showcase' to load trained policy and showcase
-    showcase_itr=400,  # CONFIGURE! epoch for which analysis is performed
+    showcase_itr=275,  # CONFIGURE! epoch for which analysis is performed
     util_params=dict(
         base_log_dir='output',  # name of output directory
         use_gpu=False,  # set True if GPU available and should be used
@@ -13,7 +16,8 @@ analysis_config = dict(
         plot=False  # plot figures of progress for reconstruction and policy training
     ),
     analysis_params=dict(
-        example_case=12,  # CONFIGURE! choose a test task
+        example_case=1,  # CONFIGURE! choose a test task
+        plot_test_tasks=False,
         log_and_plot_progress=False,  # CONFIGURE! If True: experiment will be logged to the experiment_database.json and plotted, If already logged: plot only
         save=False,  # CONFIGURE! If True: plots of following options will be saved to the experiment folder
         visualize_run=False,  # CONFIGURE! If True: learned policy of the showcase_itr will be played on example_case
